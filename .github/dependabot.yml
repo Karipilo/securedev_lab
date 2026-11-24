@@ -1,0 +1,38 @@
+# Gestión automática de dependencias con Dependabot.
+# - Revisa diariamente las dependencias Python (requirements*.txt).
+# - Revisa semanalmente las imágenes base de Docker.
+# - Agrupa las actualizaciones en un solo Pull Request para que las versiones
+#   compatibles entre sí (Flask/Werkzeug) se actualicen juntas.
+# Cada Pull Request se valida en el pipeline de Jenkins (pip-audit + pruebas)
+# antes de integrarse a main.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "security"
+    commit-message:
+      prefix: "deps"
+    groups:
+      python-seguridad:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      python-versiones:
+        applies-to: version-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "deps(docker)"
