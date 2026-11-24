@@ -1,0 +1,77 @@
+# Plan de OWASP ZAP (Automation Framework) para el pipeline de Jenkins.
+# Escaneo DAST autenticado: spider + escaneo pasivo + escaneo activo con el
+# usuario de prueba "ana", para alcanzar las páginas protegidas por login.
+# La URL objetivo se recibe en la variable de entorno TARGET_URL.
+env:
+  contexts:
+    - name: securedev
+      urls:
+        - "${TARGET_URL}"
+      includePaths:
+        - "${TARGET_URL}.*"
+      excludePaths:
+        - "${TARGET_URL}/logout.*"
+        - "${TARGET_URL}/metrics.*"
+      authentication:
+        method: form
+        parameters:
+          loginPageUrl: "${TARGET_URL}/login"
+          loginRequestUrl: "${TARGET_URL}/login"
+          loginRequestBody: "username={%username%}&password={%password%}"
+        verification:
+          method: poll
+          pollUrl: "${TARGET_URL}/"
+          pollFrequency: 60
+          pollUnits: requests
+          loggedInRegex: "\\QSalir\\E"
+          loggedOutRegex: "\\QIngresar\\E"
+      sessionManagement:
+        method: cookie
+      users:
+        - name: ana
+          credentials:
+            username: ana
+            password: ana123
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+
+jobs:
+  - type: passiveScan-config
+    parameters:
+      maxAlertsPerRule: 10
+  - type: spider
+    parameters:
+      context: securedev
+      user: ana
+      url: "${TARGET_URL}/"
+      maxDuration: 2
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 2
+  - type: activeScan
+    parameters:
+      context: securedev
+      user: ana
+      maxRuleDurationInMins: 1
+      maxScanDurationInMins: 8
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 2
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: /home/zap/reports
+      reportFile: zap-report.html
+      reportTitle: "OWASP ZAP - SecureDev Tickets"
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: /home/zap/reports
+      reportFile: zap-report.json
+  - type: report
+    parameters:
+      template: traditional-md
+      reportDir: /home/zap/reports
+      reportFile: zap-report.md

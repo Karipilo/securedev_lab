@@ -107,6 +107,36 @@ pipeline {
                 '''
             }
         }
+        stage('DAST - OWASP ZAP') {
+            options {
+                timeout(time: 25, unit: 'MINUTES')
+            }
+            steps {
+                // Escaneo dinámico autenticado contra la aplicación desplegada.
+                // El plan está en security/zap-plan.yaml (spider + pasivo + activo).
+                sh '''
+                    ZAP="zap-${BUILD_NUMBER}"
+                    docker rm -f "$ZAP" >/dev/null 2>&1 || true
+                    docker pull -q zaproxy/zap-stable
+                    docker create --name "$ZAP" --network devsecops -e TARGET_URL="${APP_URL}" \
+                        zaproxy/zap-stable zap.sh -cmd -autorun /home/zap/zap-plan.yaml
+                    docker cp security/zap-plan.yaml "$ZAP":/home/zap/zap-plan.yaml
+                    docker start -a "$ZAP" || echo "ZAP finalizó con código $?"
+                    mkdir -p reports/zap
+                    docker cp "$ZAP":/home/zap/reports/. reports/zap/
+                    docker rm -f "$ZAP"
+                '''
+                script {
+                    // Política DAST: alertas de riesgo ALTO marcan el build como
+                    // inestable (amarillo) para exigir su corrección.
+                    def altos = sh(returnStdout: true,
+                        script: 'python3 security/zap_resumen.py reports/zap/zap-report.json reports/zap/resumen.txt').trim()
+                    if (altos.toInteger() > 0) {
+                        unstable("POLÍTICA DAST: OWASP ZAP encontró ${altos} alerta(s) de riesgo ALTO")
+                    }
+                }
+            }
+        }
     }
 
     post {
@@ -115,6 +145,9 @@ pipeline {
             archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
             publishHTML(target: [reportName: 'Bandit (SAST)', reportDir: 'reports',
                                  reportFiles: 'bandit.html', keepAll: true,
+                                 alwaysLinkToLastBuild: true, allowMissing: true])
+            publishHTML(target: [reportName: 'OWASP ZAP (DAST)', reportDir: 'reports/zap',
+                                 reportFiles: 'zap-report.html', keepAll: true,
                                  alwaysLinkToLastBuild: true, allowMissing: true])
         }
     }
