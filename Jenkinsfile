@@ -1,0 +1,92 @@
+// Pipeline CI/CD DevSecOps - SecureDev Tickets (OCY1102 EV3)
+pipeline {
+    agent any
+
+    triggers {
+        // Revisión continua: Jenkins consulta GitHub cada ~5 minutos y
+        // ejecuta el pipeline cuando hay commits nuevos.
+        pollSCM('H/5 * * * *')
+    }
+
+    options {
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '30'))
+    }
+
+    environment {
+        APP_URL = 'http://securedev-app:8000'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                sh '''
+                    mkdir -p reports
+                    git log -1 --pretty="commit=%H%nautor=%an%nfecha=%ci%nmensaje=%s" | tee reports/trazabilidad.txt
+                    echo "build=${BUILD_NUMBER}" >> reports/trazabilidad.txt
+                '''
+            }
+        }
+
+        stage('Preparar entorno') {
+            steps {
+                sh '''
+                    python3 -m venv .venv
+                    . .venv/bin/activate
+                    pip install -q --upgrade pip
+                    pip install -q -r requirements.txt -r requirements-dev.txt
+                '''
+            }
+        }
+
+        stage('SAST - Bandit') {
+            steps {
+                sh '''
+                    . .venv/bin/activate
+                    bandit -r app.py -f html -o reports/bandit.html || true
+                    bandit -r app.py -f txt  -o reports/bandit.txt  || true
+                    cat reports/bandit.txt
+                '''
+            }
+        }
+
+        stage('Pruebas') {
+            steps {
+                sh '''
+                    . .venv/bin/activate
+                    python -m pytest -v --junitxml=reports/junit.xml tests/
+                '''
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh 'docker build -t securedev-app:${BUILD_NUMBER} -t securedev-app:latest .'
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh '''
+                    docker compose up -d --no-build --force-recreate
+                    for i in $(seq 1 20); do
+                        curl -fsS ${APP_URL}/health && exit 0
+                        sleep 2
+                    done
+                    echo "La aplicación no respondió al health check" && exit 1
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            junit allowEmptyResults: true, testResults: 'reports/junit.xml'
+            archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
+            publishHTML(target: [reportName: 'Bandit (SAST)', reportDir: 'reports',
+                                 reportFiles: 'bandit.html', keepAll: true,
+                                 alwaysLinkToLastBuild: true, allowMissing: true])
+        }
+    }
+}

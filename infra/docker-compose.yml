@@ -1,0 +1,26 @@
+# Infraestructura DevSecOps del laboratorio (Jenkins; luego Prometheus y Grafana).
+# Levantar desde la carpeta infra:  docker compose up -d --build
+name: devsecops
+
+services:
+  jenkins:
+    build: ./jenkins
+    container_name: jenkins
+    # Solo laboratorio: root para usar el socket de Docker de Docker Desktop.
+    # En producción se usaría un agente dedicado o Docker rootless.
+    user: root
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - devsecops
+    restart: unless-stopped
+
+networks:
+  devsecops:
+    name: devsecops
+
+volumes:
+  jenkins_home:
