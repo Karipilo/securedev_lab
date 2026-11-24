@@ -118,13 +118,21 @@ pipeline {
                     ZAP="zap-${BUILD_NUMBER}"
                     docker rm -f "$ZAP" >/dev/null 2>&1 || true
                     docker pull -q zaproxy/zap-stable
-                    docker create --name "$ZAP" --network devsecops -e TARGET_URL="${APP_URL}" \
-                        zaproxy/zap-stable zap.sh -cmd -autorun /home/zap/zap-plan.yaml
+                    docker create --name "$ZAP" --network devsecops zaproxy/zap-stable \
+                        zap.sh -cmd -autorun /home/zap/zap-plan.yaml
                     docker cp security/zap-plan.yaml "$ZAP":/home/zap/zap-plan.yaml
-                    docker start -a "$ZAP" || echo "ZAP finalizó con código $?"
+                    docker start -a "$ZAP" && CODIGO=0 || CODIGO=$?
+                    echo "ZAP finalizó con código $CODIGO"
                     mkdir -p reports/zap
-                    docker cp "$ZAP":/home/zap/reports/. reports/zap/
+                    # Se guarda siempre el log interno de ZAP como evidencia.
+                    docker cp "$ZAP":/home/zap/.ZAP/zap.log reports/zap/zap.log || true
+                    docker cp "$ZAP":/home/zap/reports/. reports/zap/ || true
                     docker rm -f "$ZAP"
+                    if [ ! -f reports/zap/zap-report.json ]; then
+                        echo "ZAP no generó reportes. Últimas líneas de su log:"
+                        tail -n 40 reports/zap/zap.log || true
+                        exit 1
+                    fi
                 '''
                 script {
                     // Política DAST: alertas de riesgo ALTO marcan el build como

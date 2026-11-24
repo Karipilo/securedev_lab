@@ -1,26 +1,27 @@
 # Plan de OWASP ZAP (Automation Framework) para el pipeline de Jenkins.
 # Escaneo DAST autenticado: spider + escaneo pasivo + escaneo activo con el
 # usuario de prueba "ana", para alcanzar las páginas protegidas por login.
-# La URL objetivo se recibe en la variable de entorno TARGET_URL.
+# URL objetivo: http://securedev-app:8000 (nombre del contenedor en la red devsecops).
+# Se escribe literal porque ZAP no reemplaza variables en la verificación de login.
 env:
   contexts:
     - name: securedev
       urls:
-        - "${TARGET_URL}"
+        - "http://securedev-app:8000"
       includePaths:
-        - "${TARGET_URL}.*"
+        - "http://securedev-app:8000.*"
       excludePaths:
-        - "${TARGET_URL}/logout.*"
-        - "${TARGET_URL}/metrics.*"
+        - "http://securedev-app:8000/logout.*"
+        - "http://securedev-app:8000/metrics.*"
       authentication:
         method: form
         parameters:
-          loginPageUrl: "${TARGET_URL}/login"
-          loginRequestUrl: "${TARGET_URL}/login"
+          loginPageUrl: "http://securedev-app:8000/login"
+          loginRequestUrl: "http://securedev-app:8000/login"
           loginRequestBody: "username={%username%}&password={%password%}"
         verification:
           method: poll
-          pollUrl: "${TARGET_URL}/"
+          pollUrl: "http://securedev-app:8000/"
           pollFrequency: 60
           pollUnits: requests
           loggedInRegex: "\\QSalir\\E"
@@ -45,7 +46,7 @@ jobs:
     parameters:
       context: securedev
       user: ana
-      url: "${TARGET_URL}/"
+      url: "http://securedev-app:8000/"
       maxDuration: 2
   - type: passiveScan-wait
     parameters:
