@@ -40,6 +40,25 @@ pipeline {
             }
         }
 
+        stage('Dependencias - pip-audit (SCA)') {
+            steps {
+                // Política de riesgo: no se despliega si alguna dependencia
+                // tiene vulnerabilidades conocidas (CVE/PYSEC) con parche disponible.
+                sh '''
+                    . .venv/bin/activate
+                    pip freeze > reports/dependencias-instaladas.txt
+                    pip-audit -r requirements.txt -f json -o reports/pip-audit.json || true
+                    pip-audit -r requirements.txt --desc -f markdown -o reports/pip-audit.md && RESULTADO=0 || RESULTADO=1
+                    cat reports/pip-audit.md
+                    if [ "$RESULTADO" -ne 0 ]; then
+                        echo "POLÍTICA DE DEPENDENCIAS: se encontraron vulnerabilidades conocidas. Se bloquea el despliegue."
+                        exit 1
+                    fi
+                    echo "Dependencias sin vulnerabilidades conocidas."
+                '''
+            }
+        }
+
         stage('SAST - Bandit') {
             steps {
                 sh '''
