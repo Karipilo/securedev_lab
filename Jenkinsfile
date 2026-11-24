@@ -10,6 +10,8 @@ pipeline {
 
     options {
         timestamps()
+        // Evita builds simultáneos que compartan reportes (integridad de evidencias).
+        disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '30'))
     }
 
@@ -22,7 +24,9 @@ pipeline {
             steps {
                 checkout scm
                 sh '''
-                    mkdir -p reports
+                    # Se eliminan reportes de builds anteriores para que la evidencia
+                    # archivada corresponda siempre a este build.
+                    rm -rf reports && mkdir -p reports
                     git log -1 --pretty="commit=%H%nautor=%an%nfecha=%ci%nmensaje=%s" | tee reports/trazabilidad.txt
                     echo "build=${BUILD_NUMBER}" >> reports/trazabilidad.txt
                 '''
@@ -47,8 +51,14 @@ pipeline {
                 sh '''
                     . .venv/bin/activate
                     pip freeze > reports/dependencias-instaladas.txt
-                    pip-audit -r requirements.txt -f json -o reports/pip-audit.json || true
-                    pip-audit -r requirements.txt --desc -f markdown -o reports/pip-audit.md && RESULTADO=0 || RESULTADO=1
+                    # Se auditan las dependencias de producción y de desarrollo.
+                    pip-audit -r requirements.txt -r requirements-dev.txt -f json -o reports/pip-audit.json || true
+                    if pip-audit -r requirements.txt -r requirements-dev.txt --desc -f markdown -o reports/pip-audit.md; then
+                        RESULTADO=0
+                        echo "Sin vulnerabilidades conocidas en requirements.txt y requirements-dev.txt (build ${BUILD_NUMBER})." > reports/pip-audit.md
+                    else
+                        RESULTADO=1
+                    fi
                     cat reports/pip-audit.md
                     if [ "$RESULTADO" -ne 0 ]; then
                         echo "POLÍTICA DE DEPENDENCIAS: se encontraron vulnerabilidades conocidas. Se bloquea el despliegue."
