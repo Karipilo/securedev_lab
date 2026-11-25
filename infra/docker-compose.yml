@@ -1,4 +1,5 @@
-# Infraestructura DevSecOps del laboratorio (Jenkins; luego Prometheus y Grafana).
+# Infraestructura DevSecOps del laboratorio: Jenkins (CI/CD), Prometheus y
+# Grafana (monitorización del entorno de producción).
 # Levantar desde la carpeta infra:  docker compose up -d --build
 name: devsecops
 
@@ -18,9 +19,49 @@ services:
       - devsecops
     restart: unless-stopped
 
+  prometheus:
+    image: prom/prometheus:v3.11.0
+    container_name: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alertas.yml:/etc/prometheus/alertas.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      - devsecops
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      # Cambiar al primer ingreso o definir GRAFANA_ADMIN_PASSWORD antes de levantar.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/securedev-seguridad.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - devsecops
+    restart: unless-stopped
+
 networks:
   devsecops:
     name: devsecops
 
 volumes:
   jenkins_home:
+  prometheus_data:
+  grafana_data:

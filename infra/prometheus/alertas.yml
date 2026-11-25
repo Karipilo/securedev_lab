@@ -1,0 +1,44 @@
+# Reglas de detección de incidentes de seguridad y disponibilidad.
+groups:
+  - name: securedev-seguridad
+    rules:
+      - alert: AplicacionCaida
+        expr: up{job="securedev-app"} == 0
+        for: 30s
+        labels:
+          severidad: critica
+        annotations:
+          resumen: "La aplicación SecureDev no responde"
+          accion: "Revisar el contenedor securedev-app y el último despliegue en Jenkins."
+
+      - alert: PosibleFuerzaBruta
+        expr: increase(securedev_login_failures_total[5m]) > 10
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "Más de 10 intentos de login fallidos en 5 minutos"
+          accion: "Identificar IP de origen en los logs, bloquearla y aplicar límite de intentos."
+
+      - alert: AtaqueCSRF
+        expr: increase(securedev_csrf_rejected_total[5m]) > 5
+        labels:
+          severidad: media
+        annotations:
+          resumen: "Solicitudes POST sin token CSRF válido"
+          accion: "Revisar origen (Referer/IP) de las solicitudes rechazadas."
+
+      - alert: IntentoAccesoNoAutorizado
+        expr: increase(securedev_access_denied_total[5m]) > 0
+        labels:
+          severidad: alta
+        annotations:
+          resumen: "Un usuario intentó acceder a tickets ajenos (IDOR bloqueado)"
+          accion: "Revisar la cuenta involucrada y evaluar suspenderla."
+
+      - alert: ErroresServidor
+        expr: sum(increase(securedev_http_requests_total{status=~"5.."}[5m])) > 5
+        labels:
+          severidad: media
+        annotations:
+          resumen: "Errores 5xx en la aplicación"
+          accion: "Revisar logs de la aplicación; puede indicar intentos de inyección."
