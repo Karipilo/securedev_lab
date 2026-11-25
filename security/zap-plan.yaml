@@ -63,16 +63,16 @@ jobs:
   - type: report
     parameters:
       template: traditional-html
-      reportDir: /home/zap/reports
+      reportDir: /home/zap
       reportFile: zap-report.html
       reportTitle: "OWASP ZAP - SecureDev Tickets"
   - type: report
     parameters:
       template: traditional-json
-      reportDir: /home/zap/reports
+      reportDir: /home/zap
       reportFile: zap-report.json
   - type: report
     parameters:
       template: traditional-md
-      reportDir: /home/zap/reports
+      reportDir: /home/zap
       reportFile: zap-report.md

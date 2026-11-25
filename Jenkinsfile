@@ -126,7 +126,9 @@ pipeline {
                     mkdir -p reports/zap
                     # Se guarda siempre el log interno de ZAP como evidencia.
                     docker cp "$ZAP":/home/zap/.ZAP/zap.log reports/zap/zap.log || true
-                    docker cp "$ZAP":/home/zap/reports/. reports/zap/ || true
+                    for f in zap-report.html zap-report.json zap-report.md; do
+                        docker cp "$ZAP":/home/zap/$f reports/zap/ || true
+                    done
                     docker rm -f "$ZAP"
                     if [ ! -f reports/zap/zap-report.json ]; then
                         echo "ZAP no generó reportes. Últimas líneas de su log:"
