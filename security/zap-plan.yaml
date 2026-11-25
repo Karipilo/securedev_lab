@@ -18,7 +18,7 @@ env:
         parameters:
           loginPageUrl: "http://securedev-app:8000/login"
           loginRequestUrl: "http://securedev-app:8000/login"
-          loginRequestBody: "username={%username%}&password={%password%}"
+          loginRequestBody: "username={%username%}&password={%password%}&csrf_token=REEMPLAZAR"
         verification:
           method: poll
           pollUrl: "http://securedev-app:8000/"

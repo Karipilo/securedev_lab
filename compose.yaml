@@ -7,11 +7,19 @@ services:
     container_name: securedev-app
     environment:
       DATABASE_PATH: /data/securedev.db
-      SECRET_KEY: clave-insegura-solo-laboratorio
+      # V5: la clave ya no está escrita aquí. Se toma de la variable de entorno
+      # SECRET_KEY del servidor (o de un gestor de secretos); si no existe, la
+      # aplicación genera una aleatoria al iniciar.
+      SECRET_KEY: ${SECRET_KEY:-}
     volumes:
-      - app_data:/data
+      - app_data_seguro:/data
     ports:
       - "127.0.0.1:8000:8000"
+    # V9: endurecimiento del contenedor.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     networks:
       - devsecops
 
@@ -20,4 +28,4 @@ networks:
     external: true
 
 volumes:
-  app_data:
+  app_data_seguro:

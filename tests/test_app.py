@@ -1,5 +1,7 @@
 """Pruebas funcionales de SecureDev Tickets (etapa 'Pruebas' del pipeline)."""
 
+import re
+
 import pytest
 
 from app import create_app
@@ -12,8 +14,17 @@ def client(tmp_path):
     return app.test_client()
 
 
+def csrf(client, url="/login"):
+    """Obtiene el token CSRF del formulario de la página indicada."""
+    html = client.get(url).get_data(as_text=True)
+    return re.search(r'name="csrf_token" value="([^"]+)"', html).group(1)
+
+
 def login(client, username="ana", password="ana123"):
-    return client.post("/login", data={"username": username, "password": password})
+    return client.post(
+        "/login",
+        data={"username": username, "password": password, "csrf_token": csrf(client)},
+    )
 
 
 def test_health(client):

@@ -1,10 +1,19 @@
-"""Aplicación deliberadamente vulnerable para la evaluación OCY1102 EV3.
+"""SecureDev Tickets - versión corregida (OCY1102 EV3).
 
-Solo debe ejecutarse en el laboratorio local. El alumnado debe revisar y corregir
-los defectos; estos comentarios no enumeran las respuestas de la evaluación.
+Correcciones de seguridad aplicadas (detalle en docs/INFORME.md):
+  V1  Inyección SQL en /search            -> consulta parametrizada
+  V2  XSS almacenado en comentarios        -> se elimina el filtro |safe (autoescape)
+  V3  IDOR en /tickets/<id> y comentarios  -> control de acceso por propietario
+  V4  Ausencia de tokens CSRF              -> token CSRF por sesión en todo POST
+  V5  SECRET_KEY fija en el código         -> se toma del entorno o se genera aleatoria
+  V6  Cabeceras de seguridad ausentes      -> CSP, X-Frame-Options, nosniff, etc.
+  V7  Cookie de sesión sin SameSite        -> SameSite=Lax + HttpOnly
+  V8  Servidor de desarrollo / bind 0.0.0.0 -> Gunicorn en el contenedor
 """
 
+import hmac
 import os
+import secrets
 import sqlite3
 import time
 from pathlib import Path
@@ -28,13 +37,46 @@ LOGIN_FAILURES = Counter(
     "securedev_login_failures_total",
     "Intentos de acceso fallidos",
 )
+# Métricas de incidentes de seguridad para la monitorización (Grafana).
+CSRF_REJECTED = Counter(
+    "securedev_csrf_rejected_total",
+    "Solicitudes POST rechazadas por token CSRF inválido o ausente",
+)
+ACCESS_DENIED = Counter(
+    "securedev_access_denied_total",
+    "Intentos de acceso a tickets de otro usuario (IDOR bloqueado)",
+)
+
+SECURITY_HEADERS = {
+    # V6: política de contenido restrictiva (sin scripts ni estilos en línea).
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; "
+        "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+    ),
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Cache-Control": "no-store",
+}
 
 
 def create_app(database_path=None):
     app = Flask(__name__)
-    app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "clave-insegura-solo-laboratorio")
+    # V5: la clave se inyecta por variable de entorno; si no existe se genera una
+    # aleatoria (las sesiones se invalidan al reiniciar, nunca se usa una clave fija).
+    app.config["SECRET_KEY"] = os.getenv("SECRET_KEY") or secrets.token_hex(32)
     app.config["DATABASE_PATH"] = str(
         database_path or os.getenv("DATABASE_PATH", str(Path(__file__).with_name("securedev.db")))
+    )
+    # V7: atributos de la cookie de sesión. SESSION_COOKIE_SECURE se activa al
+    # publicar detrás de HTTPS (variable de entorno SESSION_COOKIE_SECURE=1).
+    app.config.update(
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE") == "1",
     )
 
     def db():
@@ -49,12 +91,31 @@ def create_app(database_path=None):
         if connection is not None:
             connection.close()
 
+    # V4: protección CSRF (patrón de token sincronizado almacenado en la sesión).
+    def csrf_token():
+        if "csrf_token" not in session:
+            session["csrf_token"] = secrets.token_urlsafe(32)
+        return session["csrf_token"]
+
+    app.jinja_env.globals["csrf_token"] = csrf_token
+
     @app.before_request
     def start_request_timer():
         g.request_started_at = time.perf_counter()
 
+    @app.before_request
+    def csrf_protect():
+        if request.method == "POST":
+            sent = request.form.get("csrf_token", "")
+            expected = session.get("csrf_token", "")
+            if not expected or not hmac.compare_digest(sent, expected):
+                CSRF_REJECTED.inc()
+                abort(400, description="Token CSRF inválido o ausente")
+
     @app.after_request
     def record_request(response):
+        for header, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(header, value)
         if request.endpoint != "metrics":
             endpoint = request.endpoint or "unknown"
             HTTP_REQUESTS.labels(endpoint, request.method, str(response.status_code)).inc()
@@ -105,6 +166,19 @@ def create_app(database_path=None):
     def current_user():
         return session.get("user_id")
 
+    def own_ticket_or_404(ticket_id):
+        # V3: solo el propietario puede ver o comentar su ticket. Se responde 404
+        # (y no 403) para no revelar la existencia de tickets ajenos.
+        item = db().execute(
+            "SELECT id, owner_id, title, body FROM tickets WHERE id = ? AND owner_id = ?",
+            (ticket_id, current_user()),
+        ).fetchone()
+        if item is None:
+            if db().execute("SELECT 1 FROM tickets WHERE id = ?", (ticket_id,)).fetchone():
+                ACCESS_DENIED.inc()
+            abort(404)
+        return item
+
     @app.route("/")
     def index():
         if not current_user():
@@ -124,7 +198,7 @@ def create_app(database_path=None):
                 "SELECT id, username, password_hash FROM users WHERE username = ?", (username,)
             ).fetchone()
             if user and check_password_hash(user["password_hash"], password):
-                session.clear()
+                session.clear()  # evita fijación de sesión
                 session["user_id"] = user["id"]
                 session["username"] = user["username"]
                 return redirect(url_for("index"))
@@ -141,11 +215,7 @@ def create_app(database_path=None):
     def ticket(ticket_id):
         if not current_user():
             return redirect(url_for("login"))
-        item = db().execute(
-            "SELECT id, owner_id, title, body FROM tickets WHERE id = ?", (ticket_id,)
-        ).fetchone()
-        if item is None:
-            abort(404)
+        item = own_ticket_or_404(ticket_id)
         comments = db().execute(
             "SELECT body FROM comments WHERE ticket_id = ? ORDER BY id", (ticket_id,)
         ).fetchall()
@@ -155,23 +225,26 @@ def create_app(database_path=None):
     def add_comment(ticket_id):
         if not current_user():
             return redirect(url_for("login"))
-        if db().execute("SELECT id FROM tickets WHERE id = ?", (ticket_id,)).fetchone() is None:
-            abort(404)
-        body = request.form.get("body", "")
-        db().execute(
-            "INSERT INTO comments (ticket_id, author_id, body) VALUES (?, ?, ?)",
-            (ticket_id, current_user(), body),
-        )
-        db().commit()
+        own_ticket_or_404(ticket_id)
+        body = request.form.get("body", "").strip()[:2000]
+        if body:
+            db().execute(
+                "INSERT INTO comments (ticket_id, author_id, body) VALUES (?, ?, ?)",
+                (ticket_id, current_user(), body),
+            )
+            db().commit()
         return redirect(url_for("ticket", ticket_id=ticket_id))
 
     @app.get("/search")
     def search():
         if not current_user():
             return redirect(url_for("login"))
-        query = request.args.get("q", "")
-        sql = f"SELECT id, title FROM tickets WHERE title LIKE '%{query}%' ORDER BY id"
-        tickets = db().execute(sql).fetchall()
+        query = request.args.get("q", "")[:100]
+        # V1: consulta parametrizada; además solo busca en tickets del usuario.
+        tickets = db().execute(
+            "SELECT id, title FROM tickets WHERE owner_id = ? AND title LIKE ? ORDER BY id",
+            (current_user(), f"%{query}%"),
+        ).fetchall()
         return render_template("search.html", tickets=tickets, query=query)
 
     @app.get("/health")
@@ -186,4 +259,5 @@ def create_app(database_path=None):
 
 
 if __name__ == "__main__":
-    create_app().run(host="0.0.0.0", port=8000)
+    # Solo para desarrollo local. En el contenedor la app se sirve con Gunicorn.
+    create_app().run(host="127.0.0.1", port=8000)
